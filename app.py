@@ -49,8 +49,10 @@ ROW_CODES = {
 
 ROW_KEYS = ("id", "entity", "eventTime", "revision", "text")
 
-# gs://<bucket>/<object-path>  (bucket: no slashes, object: anything after)
-URI_RE = re.compile(r"^gs://[^/]+/.+$")
+# gs://<bucket>/<object-path>
+URI_SPLIT_RE = re.compile(r"^gs://([^/]+)/(.+)$", re.DOTALL)
+BUCKET_CHARS_RE = re.compile(r"^[a-z0-9][a-z0-9\-_.]*[a-z0-9]$")
+IP_LITERAL_RE = re.compile(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$")
 
 DECIMAL_RE = re.compile(r"^\d+$")
 
@@ -149,6 +151,35 @@ def parse_timestamp(s: str):
     return utc_dt, normalized
 
 
+def validate_uri(uri) -> bool:
+    """gs://<bucket>/<object> with GCS-accurate bucket/object naming rules."""
+    if not isinstance(uri, str):
+        return False
+    m = URI_SPLIT_RE.match(uri)
+    if not m:
+        return False
+    bucket, obj_name = m.group(1), m.group(2)
+
+    if not (3 <= len(bucket) <= 63):
+        return False
+    if not BUCKET_CHARS_RE.match(bucket):
+        return False
+    if ".." in bucket:
+        return False
+    if IP_LITERAL_RE.match(bucket):
+        return False
+
+    if obj_name in (".", ".."):
+        return False
+    if "\n" in obj_name or "\r" in obj_name:
+        return False
+    obj_len = len(obj_name.encode("utf-8"))
+    if not (1 <= obj_len <= 1024):
+        return False
+
+    return True
+
+
 def is_safe_nonneg_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= (2 ** 53 - 1)
 
@@ -200,16 +231,24 @@ def validate_object(obj):
     Returns (codes, uri_for_output, parsed_rows_or_None).
     parsed_rows_or_None is the list of row dicts IF and only IF the object
     ends up with zero codes (i.e. is accepted).
+
+    `obj` need not be a dict — if the array element itself is malformed
+    (a string, a number, null, ...) every field lookup below just comes
+    back "missing", so we still emit every independently-applicable code
+    instead of short-circuiting to a single SCHEMA_INVALID.
     """
     codes = set()
 
-    raw_uri = obj.get("uri")
+    def field(key):
+        return obj.get(key) if isinstance(obj, dict) else None
+
+    raw_uri = field("uri")
     uri_for_output = raw_uri if isinstance(raw_uri, str) else None
-    if not isinstance(raw_uri, str) or not URI_RE.match(raw_uri):
+    if not validate_uri(raw_uri):
         codes.add("URI_INVALID")
 
-    gen = obj.get("generation")
-    fgen = obj.get("fetchedGeneration")
+    gen = field("generation")
+    fgen = field("fetchedGeneration")
     gen_ok = isinstance(gen, str) and DECIMAL_RE.match(gen)
     fgen_ok = isinstance(fgen, str) and DECIMAL_RE.match(fgen)
     if not gen_ok or not fgen_ok:
@@ -217,19 +256,19 @@ def validate_object(obj):
     elif int(gen) != int(fgen):
         codes.add("GENERATION_MISMATCH")
 
-    crc = obj.get("crc32c")
+    crc = field("crc32c")
     crc_ok = isinstance(crc, str) and CRC32C_RE.match(crc)
     if not crc_ok:
         codes.add("CRC32C_INVALID")
 
-    content = obj.get("content")
+    content = field("content")
 
     if crc_ok and isinstance(content, str):
         computed = crc32c_hex(content.encode("utf-8"))
         if computed != crc:
             codes.add("CRC32C_MISMATCH")
 
-    if obj.get("schemaId") != "training-v1":
+    if field("schemaId") != "training-v1":
         codes.add("SCHEMA_INVALID")
 
     parsed_rows = []
@@ -314,10 +353,6 @@ def build_corpus():
     candidate_rows = []  # list of raw parsed row dicts from accepted objects
 
     for obj in objects:
-        if not isinstance(obj, dict):
-            rejected_objects.append({"uri": None, "reasonCodes": ["SCHEMA_INVALID"]})
-            continue
-
         codes, uri_for_output, rows = validate_object(obj)
         if codes:
             rejected_objects.append(
