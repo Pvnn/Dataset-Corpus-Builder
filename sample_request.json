@@ -1,0 +1,17 @@
+{
+  "policy": {
+    "minTime": "2020-01-01T00:00:00Z",
+    "maxTime": "2030-01-01T00:00:00Z",
+    "contaminationThreshold": 0.8
+  },
+  "objects": [
+    {
+      "uri": "gs://mybucket/myobject.jsonl",
+      "generation": "5",
+      "fetchedGeneration": "5",
+      "crc32c": "35179a87",
+      "schemaId": "training-v1",
+      "content": "{\"id\":\"a1\",\"entity\":\"Acme  Corp\",\"eventTime\":\"2026-01-02T05:30:00+05:30\",\"revision\":1,\"text\":\"Hello   World\"}\n"
+    }
+  ]
+}
