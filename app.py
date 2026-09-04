@@ -2,7 +2,7 @@
 build-corpus service
 =====================
 
-Implements POST /build-corpus exactly as described in the assignment spec:
+Implements POST /build-corpus for robust dataset processing and validation:
   1. Validate + accept/reject each raw "object" (a JSONL file + its metadata).
   2. Canonicalize entity/text, normalize eventTime to UTC.
   3. Deduplicate rows by [entity, eventTime, text].
@@ -27,7 +27,7 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 # --------------------------------------------------------------------------
-# Constants: the exact reason codes the spec defines.
+# Constants: Reason codes for validation.
 # --------------------------------------------------------------------------
 
 OBJECT_CODES = {
